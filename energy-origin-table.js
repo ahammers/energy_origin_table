@@ -79,6 +79,8 @@ class EnergyOriginTable extends HTMLElement {
         devices: this._config.devices || [],
         deviceStatisticModes: this._config.device_statistic_modes || this._config.statistic_modes || {},
         debug: Boolean(this._config.debug),
+        debugSeries: this._config.debug_series || this._config.debugSeries || [],
+        relativeBarWidths: this._useRelativeBarWidths(),
       },
     });
 
@@ -187,6 +189,8 @@ class EnergyOriginTable extends HTMLElement {
             .map((device) => ({
               statisticId: device.statistic_id || device.statisticId || device.entity,
               name: device.name || this._friendlyName(device.entity) || device.entity,
+              includedInStatisticId: device.included_in_stat || device.includedInStatisticId || null,
+              level: Number(device.level) || null,
             }))
             .filter((device) => device.statisticId)
         : [],
@@ -276,6 +280,8 @@ class EnergyOriginTable extends HTMLElement {
         return {
           statisticId,
           name: device.name || this._friendlyName(statisticId) || statisticId,
+          includedInStatisticId: device.included_in_stat || null,
+          level: device.included_in_stat ? 2 : 1,
         };
       })
       .filter((device) => device.statisticId));
@@ -373,6 +379,10 @@ class EnergyOriginTable extends HTMLElement {
           sum: sumDelta.droppedOutliers,
           state: stateDelta.droppedOutliers,
         },
+        fullDebug: {
+          sum: sumDelta.debug,
+          state: stateDelta.debug,
+        },
       };
     }
     return series;
@@ -406,6 +416,10 @@ class EnergyOriginTable extends HTMLElement {
     return {
       values,
       droppedOutliers: points.length - cleaned.length,
+      debug: {
+        cleanedPoints: cleaned,
+        deltaValues: values,
+      },
     };
   }
 
@@ -542,6 +556,7 @@ class EnergyOriginTable extends HTMLElement {
         name: device.name,
         statisticId: device.statisticId,
         statisticMode,
+        level: this._deviceLevel(device),
         ...totals,
       };
     }).filter((row) => row.total > 0);
@@ -724,6 +739,9 @@ class EnergyOriginTable extends HTMLElement {
             })
           : null,
         rawPoints: this._rawPointDebug(raw.data[statisticId]),
+        fullSeries: this._shouldDebugSeries(statisticId)
+          ? this._fullSeriesDebug(statisticId, raw.data[statisticId], entry)
+          : null,
       };
     }
 
@@ -751,6 +769,7 @@ class EnergyOriginTable extends HTMLElement {
         name: row.name,
         statisticId: row.statisticId,
         statisticMode: row.statisticMode,
+        level: row.level,
         total: row.total,
         pv: row.pv,
         battery: row.battery,
@@ -759,6 +778,46 @@ class EnergyOriginTable extends HTMLElement {
       })),
       series: seriesInfo,
     };
+  }
+
+  _shouldDebugSeries(statisticId) {
+    const configured = this._config.debug_series || this._config.debugSeries || [];
+    return configured === true || (Array.isArray(configured) && configured.includes(statisticId));
+  }
+
+  _fullSeriesDebug(statisticId, rawPoints, entry) {
+    const raw = Array.isArray(rawPoints) ? rawPoints : [];
+    const cleanedStateKeys = new Set((entry && entry.fullDebug && entry.fullDebug.state.cleanedPoints
+      ? entry.fullDebug.state.cleanedPoints
+      : []).map((point) => this._pointIdentity(point)));
+    const cleanedSumKeys = new Set((entry && entry.fullDebug && entry.fullDebug.sum.cleanedPoints
+      ? entry.fullDebug.sum.cleanedPoints
+      : []).map((point) => this._pointIdentity(point)));
+
+    return {
+      statisticId,
+      raw: raw.map((point) => ({
+        time: new Date(this._pointTime(point)).toISOString(),
+        sum: this._debugNumber(point.sum),
+        state: this._debugNumber(point.state),
+        keptForSum: cleanedSumKeys.has(this._pointIdentity(point)),
+        keptForState: cleanedStateKeys.has(this._pointIdentity(point)),
+      })),
+      selectedDeltaByHour: this._mapToDebugArray(this._seriesValues({ [statisticId]: entry }, statisticId, "device")),
+      sumDeltaByHour: this._mapToDebugArray(entry ? entry.sumValues : new Map()),
+      stateDeltaByHour: this._mapToDebugArray(entry ? entry.stateValues : new Map()),
+    };
+  }
+
+  _pointIdentity(point) {
+    return `${this._pointTime(point)}|${point.sum}|${point.state}`;
+  }
+
+  _mapToDebugArray(values) {
+    return [...values.entries()].map(([time, value]) => ({
+      time,
+      value: this._debugNumber(value),
+    }));
   }
 
   _entityDebug(entityId) {
@@ -874,6 +933,7 @@ class EnergyOriginTable extends HTMLElement {
 
   _renderTable() {
     const rows = this._sortedRows(this._state.rows);
+    const maxTotal = Math.max(...rows.map((row) => row.total || 0), 0);
     const summary = `Auswertbar: ${this._state.evaluableHours} von ${this._state.hourCount} Stunden`;
     const missing = this._state.missingSourceHours ? `; nicht auswertbar: ${this._state.missingSourceHours}` : "";
     const fallback = this._state.stateFallbackRows
@@ -894,7 +954,7 @@ class EnergyOriginTable extends HTMLElement {
           </tr>
         </thead>
         <tbody>
-          ${rows.map((row) => this._renderRow(row)).join("")}
+          ${rows.map((row, index) => this._renderRow(row, maxTotal, index, rows)).join("")}
         </tbody>
       </table>
       ${this._renderDebug()}
@@ -922,21 +982,28 @@ class EnergyOriginTable extends HTMLElement {
     return `<th><button type="button" data-sort="${key}">${label}${marker}</button></th>`;
   }
 
-  _renderRow(row) {
+  _renderRow(row, maxTotal, index, rows) {
     const pvPercent = this._percent(row.pv, row.total);
     const batteryPercent = this._percent(row.battery, row.total);
     const gridPercent = this._percent(row.grid, row.total);
+    const relativeBarWidth = this._useRelativeBarWidths()
+      ? this._relativeBarWidth(row.total, maxTotal)
+      : 100;
+    const previous = index > 0 ? rows[index - 1] : null;
+    const levelBreak = previous && previous.level !== row.level ? " level-break" : "";
     const title = `PV ${this._format(row.pv)} kWh (${this._format(pvPercent)} %), Batterie ${this._format(row.battery)} kWh (${this._format(batteryPercent)} %), Netz ${this._format(row.grid)} kWh (${this._format(gridPercent)} %)`;
 
     return `
-      <tr>
+      <tr class="level-${row.level || 1}${levelBreak}">
         <td class="name" title="${this._escape(row.statisticId)}">${this._escape(row.name)}</td>
         <td data-label="Gesamt">${this._format(row.total)} kWh</td>
         <td data-label="Herkunft">
-          <div class="bar" title="${this._escape(title)}">
-            <span class="pv" style="width:${pvPercent}%"></span>
-            <span class="battery" style="width:${batteryPercent}%"></span>
-            <span class="grid" style="width:${gridPercent}%"></span>
+          <div class="bar-track">
+            <div class="bar" style="width:${relativeBarWidth}%" title="${this._escape(title)}">
+              <span class="pv" style="width:${pvPercent}%"></span>
+              <span class="battery" style="width:${batteryPercent}%"></span>
+              <span class="grid" style="width:${gridPercent}%"></span>
+            </div>
           </div>
         </td>
         <td data-label="PV">${this._formatValue(row.pv, pvPercent)}</td>
@@ -962,12 +1029,16 @@ class EnergyOriginTable extends HTMLElement {
 
     if (this._sort.key === "default") {
       return copy.sort((a, b) => {
-        const groupCompare = this._deviceGroup(a.name) - this._deviceGroup(b.name);
-        return groupCompare || collator.compare(a.name, b.name);
+        const levelCompare = (a.level || 1) - (b.level || 1);
+        return levelCompare || collator.compare(a.name, b.name);
       });
     }
 
     return copy.sort((a, b) => {
+      const levelCompare = (a.level || 1) - (b.level || 1);
+      if (levelCompare) {
+        return levelCompare;
+      }
       if (this._sort.key === "name") {
         return direction * collator.compare(a.name, b.name);
       }
@@ -975,12 +1046,33 @@ class EnergyOriginTable extends HTMLElement {
     });
   }
 
-  _deviceGroup(name) {
-    return /\((K|EG|OG)\)\s*$/i.test(name || "") ? 1 : 0;
+  _deviceLevel(device) {
+    if (Number(device.level) > 0) {
+      return Number(device.level);
+    }
+    if (device.includedInStatisticId) {
+      return 2;
+    }
+    return /\((K|EG|OG)\)\s*$/i.test(device.name || "") ? 2 : 1;
   }
 
   _percent(value, total) {
     return total > 0 ? Math.max(0, Math.min(100, (value / total) * 100)) : 0;
+  }
+
+  _relativeBarWidth(value, maxTotal) {
+    if (!maxTotal || maxTotal <= 0 || !Number.isFinite(value)) {
+      return 0;
+    }
+    const width = (value / maxTotal) * 100;
+    return value > 0 ? Math.max(2, Math.min(100, width)) : 0;
+  }
+
+  _useRelativeBarWidths() {
+    return this._config.relative_bar_widths === true
+      || this._config.relativeBarWidths === true
+      || this._config.bar_width_mode === "relative"
+      || this._config.barWidthMode === "relative";
   }
 
   _formatValue(value, percent) {
@@ -1088,6 +1180,15 @@ class EnergyOriginTable extends HTMLElement {
         max-width: 220px;
       }
 
+      tr.level-2 .name {
+        font-weight: 500;
+        padding-left: 22px;
+      }
+
+      tr.level-break td {
+        border-top: 2px solid var(--divider-color, rgba(0, 0, 0, 0.18));
+      }
+
       .muted {
         color: var(--secondary-text-color);
         display: block;
@@ -1095,12 +1196,17 @@ class EnergyOriginTable extends HTMLElement {
         margin-top: 2px;
       }
 
+      .bar-track {
+        min-width: 150px;
+        width: 100%;
+      }
+
       .bar {
         background: var(--divider-color, rgba(0, 0, 0, 0.12));
         border-radius: 6px;
         display: flex;
         height: 18px;
-        min-width: 150px;
+        min-width: 0;
         overflow: hidden;
         width: 100%;
       }
@@ -1201,8 +1307,12 @@ class EnergyOriginTable extends HTMLElement {
           content: "";
         }
 
-        .bar {
+        .bar-track {
           min-width: 180px;
+        }
+
+        tr.level-2 .name {
+          padding-left: 0;
         }
       }
     `;

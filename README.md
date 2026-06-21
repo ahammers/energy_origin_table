@@ -41,6 +41,25 @@ colors:
   grid: "#e53935"
 ```
 
+## Relative Herkunftsbalken
+
+Standardmaessig ist jeder Herkunftsbalken auf die jeweilige Zeile normiert. Optional kann die Gesamtbreite des Balkens nach dem Gesamtverbrauch skaliert werden. Die Zeile mit dem hoechsten Gesamtverbrauch nutzt dann die volle Breite, alle anderen Balken werden proportional kuerzer dargestellt.
+
+```yaml
+type: custom:energy-origin-table
+title: Energieherkunft
+days: 30
+relative_bar_widths: true
+```
+
+Die Farben innerhalb des Balkens zeigen weiterhin die Herkunftsanteile der jeweiligen Zeile.
+
+## Ebenen-Sortierung
+
+Die Karte nutzt `included_in_stat` aus der Energy-Dashboard-Konfiguration als Ebenen-Information. Geraete ohne uebergeordnete Statistik bleiben Ebene 1, enthaltene Einzelgeraete werden Ebene 2. Es werden keine Werte abgezogen; die Ebenen dienen nur der Sortierung und Darstellung.
+
+Bei jeder Sortierung bleibt Ebene 1 oben. Der angeklickte Messwert sortiert erst innerhalb der jeweiligen Ebene.
+
 ## Statistikmodus fuer berechnete Helfer
 
 Berechnete Summenwert-Helfer koennen kurzzeitig falsche Tief- oder Hochpunkte liefern, wenn eine Quelle des Helfers voruebergehend `0` meldet. Die Karte entfernt solche deutlichen Ausreisser aus der kumulativen Reihe und verteilt den Verbrauch bis zum naechsten plausiblen Punkt ueber die betroffene Zeitspanne.
@@ -76,6 +95,17 @@ debug: true
 ```
 
 Die Ausgabe enthaelt erkannte Quellen und Geraete, Entity-Attribute, Statistik-Metadaten, erste und letzte Recorder-Punkte sowie die aus `sum` und `state` berechneten Gesamtwerte.
+
+Fuer einzelne problematische Statistikreihen kann die komplette Stundenreihe ausgegeben werden:
+
+```yaml
+type: custom:energy-origin-table
+title: Energieherkunft
+days: 30
+debug: true
+debug_series:
+  - sensor.erdgeschoss_total_active_energy
+```
 
 ## Manueller Fallback
 
