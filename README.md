@@ -56,12 +56,13 @@ Die Farben innerhalb des Balkens zeigen weiterhin die Herkunftsanteile der jewei
 
 ## Donut-Diagramme
 
-Die Tabelle kann um Donut-Diagramme oberhalb der Tabelle erweitert werden. Jeder Donut zeigt eine Messgroesse. Der innere Ring zeigt Ebene 1, der aeussere Ring Ebene 2. Die Legende wird einmal gemeinsam rechts neben den Donuts angezeigt.
+Die Tabelle kann um Donut-Diagramme oberhalb der Tabelle erweitert werden. Jeder Donut zeigt eine Messgroesse. Der innere Ring zeigt Ebene 1, der aeussere Ring Ebene 2. Die Ebene-2-Segmente werden innerhalb des Winkelbereichs ihres Ebene-1-Parents gezeichnet, damit die Zuordnung sichtbar bleibt; nicht durch Ebene-2-Geraete abgedeckte Parent-Anteile bleiben im Aussenring frei. Die Legende wird einmal gemeinsam rechts neben den Donuts angezeigt. Beim Hover ueber ein Segment zeigt der Browser einen Tooltip mit Name, Wert und Prozentanteil.
 
 ```yaml
 type: custom:energy-origin-table
 title: Energieherkunft
 days: 30
+donuts_per_row: 2
 donuts:
   - total
   - pv

@@ -82,6 +82,7 @@ class EnergyOriginTable extends HTMLElement {
         debugSeries: this._config.debug_series || this._config.debugSeries || [],
         relativeBarWidths: this._useRelativeBarWidths(),
         donuts: this._enabledDonutMetrics(),
+        donutsPerRow: this._donutsPerRow(),
         showTable: this._showTable(),
       },
     });
@@ -557,6 +558,7 @@ class EnergyOriginTable extends HTMLElement {
       return {
         name: device.name,
         statisticId: device.statisticId,
+        includedInStatisticId: device.includedInStatisticId || null,
         statisticMode,
         level: this._deviceLevel(device),
         ...totals,
@@ -770,6 +772,7 @@ class EnergyOriginTable extends HTMLElement {
       rows: result.rows.map((row) => this._roundObject({
         name: row.name,
         statisticId: row.statisticId,
+        includedInStatisticId: row.includedInStatisticId,
         statisticMode: row.statisticMode,
         level: row.level,
         total: row.total,
@@ -979,9 +982,10 @@ class EnergyOriginTable extends HTMLElement {
 
     const rows = this._sortedRows(this._state.rows);
     const colorMap = this._rowColorMap(rows);
+    const donutsPerRow = this._donutsPerRow();
     return `
       <div class="donut-layout">
-        <div class="donuts">
+        <div class="donuts" style="--donuts-per-row:${donutsPerRow}">
           ${metrics.map((metric) => this._renderDonut(metric, rows, colorMap)).join("")}
         </div>
         ${this._renderDonutLegend(rows, colorMap)}
@@ -995,13 +999,14 @@ class EnergyOriginTable extends HTMLElement {
     const level2 = rows.filter((row) => (row.level || 1) > 1);
     const level1Total = this._metricTotal(level1, metric);
     const level2Total = this._metricTotal(level2, metric);
+    const geometry = this._donutGeometry(level1, level2, metric);
 
     return `
       <section class="donut-card">
         <div class="donut-title">${this._escape(label)}</div>
         <svg class="donut-svg" viewBox="0 0 240 240" role="img" aria-label="${this._escape(label)}">
-          ${this._renderDonutRing(level2, metric, 82, 110, "Ebene 2", colorMap)}
-          ${this._renderDonutRing(level1, metric, 45, 75, "Ebene 1", colorMap)}
+          ${this._renderDonutSegments(geometry.level2Segments, metric, 82, 110, "Ebene 2", colorMap)}
+          ${this._renderDonutSegments(geometry.level1Segments, metric, 45, 75, "Ebene 1", colorMap)}
           <circle cx="120" cy="120" r="38" class="donut-hole"></circle>
           <text x="120" y="116" class="donut-center-title">${this._escape(this._metricShortLabel(metric))}</text>
           <text x="120" y="136" class="donut-center-value">${this._escape(this._format(level1Total))} kWh</text>
@@ -1014,31 +1019,138 @@ class EnergyOriginTable extends HTMLElement {
     `;
   }
 
-  _renderDonutRing(rows, metric, innerRadius, outerRadius, levelLabel, colorMap) {
-    const values = rows
+  _donutGeometry(level1, level2, metric) {
+    const level1Values = level1
       .map((row, index) => ({
         row,
         index,
         value: Math.max(0, Number(row[metric]) || 0),
       }))
       .filter((item) => item.value > 0);
-    const total = values.reduce((sum, item) => sum + item.value, 0);
+    const level1Total = level1Values.reduce((sum, item) => sum + item.value, 0);
+    const level1Segments = [];
+    const parentAngles = new Map();
 
-    if (total <= 0) {
+    let startAngle = -90;
+    for (const item of level1Values) {
+      const sweep = level1Total > 0 ? (item.value / level1Total) * 360 : 0;
+      const endAngle = startAngle + sweep;
+      const segment = { ...item, startAngle, endAngle, total: level1Total };
+      level1Segments.push(segment);
+      parentAngles.set(item.row.statisticId || item.row.name, segment);
+      startAngle = endAngle;
+    }
+
+    const level2Values = level2
+      .map((row, index) => ({
+        row,
+        index,
+        value: Math.max(0, Number(row[metric]) || 0),
+      }))
+      .filter((item) => item.value > 0);
+    const level2Segments = [];
+    const assignedLevel2 = new Set();
+
+    for (const parent of level1Segments) {
+      const children = level2Values.filter((item) => this._rowBelongsToParent(item.row, parent.row));
+      const childTotal = children.reduce((sum, item) => sum + item.value, 0);
+      const childScaleTotal = Math.max(parent.value, childTotal);
+      let childStart = parent.startAngle;
+      for (const child of children) {
+        const parentSweep = parent.endAngle - parent.startAngle;
+        const childSweep = childScaleTotal > 0 ? (child.value / childScaleTotal) * parentSweep : 0;
+        const childEnd = childStart + childSweep;
+        level2Segments.push({
+          ...child,
+          startAngle: childStart,
+          endAngle: childEnd,
+          total: parent.value,
+          parentRow: parent.row,
+        });
+        assignedLevel2.add(child.row.statisticId || child.row.name);
+        childStart = childEnd;
+      }
+    }
+
+    const orphanChildren = level2Values.filter((item) => {
+      if (assignedLevel2.has(item.row.statisticId || item.row.name)) {
+        return false;
+      }
+      if (!item.row.includedInStatisticId) {
+        return true;
+      }
+      return !parentAngles.has(item.row.includedInStatisticId);
+    });
+    if (orphanChildren.length) {
+      const orphanTotal = orphanChildren.reduce((sum, item) => sum + item.value, 0);
+      let orphanStart = -90;
+      for (const child of orphanChildren) {
+        const childSweep = orphanTotal > 0 ? (child.value / orphanTotal) * 360 : 0;
+        const childEnd = orphanStart + childSweep;
+        level2Segments.push({
+          ...child,
+          startAngle: orphanStart,
+          endAngle: childEnd,
+          total: orphanTotal,
+          parentRow: null,
+        });
+        orphanStart = childEnd;
+      }
+    }
+
+    return { level1Segments, level2Segments };
+  }
+
+  _renderDonutSegments(segments, metric, innerRadius, outerRadius, levelLabel, colorMap) {
+    if (!segments.length) {
       return `<circle cx="120" cy="120" r="${(innerRadius + outerRadius) / 2}" class="donut-empty" stroke-width="${outerRadius - innerRadius}"></circle>`;
     }
 
-    let startAngle = -90;
-    return values.map((item) => {
-      const sweep = (item.value / total) * 360;
-      const endAngle = startAngle + sweep;
-      const path = this._annularSectorPath(120, 120, innerRadius, outerRadius, startAngle, endAngle);
-      const percent = this._percent(item.value, total);
+    const background = `<circle cx="120" cy="120" r="${(innerRadius + outerRadius) / 2}" class="donut-empty" stroke-width="${outerRadius - innerRadius}"></circle>`;
+    return background + segments.map((item) => {
+      const path = this._annularSectorPath(120, 120, innerRadius, outerRadius, item.startAngle, item.endAngle);
+      const percent = this._percent(item.value, item.total);
       const color = this._rowColor(item.row, item.index, colorMap);
-      const title = `${levelLabel}: ${item.row.name} - ${this._format(item.value)} kWh (${this._format(percent)} %)`;
-      startAngle = endAngle;
-      return `<path d="${path}" fill="${color}"><title>${this._escape(title)}</title></path>`;
+      const parent = item.parentRow ? ` in ${item.parentRow.name}` : "";
+      const title = `${levelLabel}${parent}: ${item.row.name} - ${this._metricShortLabel(metric)} ${this._format(item.value)} kWh (${this._format(percent)} %)`;
+      return `<path class="donut-segment" d="${path}" fill="${color}" tabindex="0" aria-label="${this._escape(title)}"><title>${this._escape(title)}</title></path>`;
     }).join("");
+  }
+
+  _rowBelongsToParent(row, parentRow) {
+    if (row.includedInStatisticId && parentRow.statisticId) {
+      return row.includedInStatisticId === parentRow.statisticId;
+    }
+    const parentName = String(parentRow.name || "").replace(/\s*\([^)]*\)\s*$/, "").trim().toLowerCase();
+    const rowName = String(row.name || "").toLowerCase();
+    const aliases = this._parentNameAliases(parentName);
+    if (!aliases.length) {
+      return false;
+    }
+    return aliases.some((alias) => {
+      if (alias.length <= 2) {
+        return rowName.includes(`(${alias})`);
+      }
+      return rowName.includes(`(${alias})`) || rowName.includes(alias);
+    });
+  }
+
+  _parentNameAliases(parentName) {
+    const normalized = String(parentName || "").trim().toLowerCase();
+    if (!normalized) {
+      return [];
+    }
+    const aliases = [normalized];
+    if (normalized.includes("obergeschoss")) {
+      aliases.push("og");
+    }
+    if (normalized.includes("erdgeschoss")) {
+      aliases.push("eg");
+    }
+    if (normalized.includes("keller")) {
+      aliases.push("k");
+    }
+    return aliases;
   }
 
   _renderDonutLegend(rows, colorMap) {
@@ -1216,6 +1328,14 @@ class EnergyOriginTable extends HTMLElement {
       return all.filter((metric) => this._isEnabled(configured[metric]));
     }
     return [];
+  }
+
+  _donutsPerRow() {
+    const value = Number(this._config.donuts_per_row || this._config.donutsPerRow || 1);
+    if (!Number.isFinite(value) || value <= 0) {
+      return 1;
+    }
+    return Math.max(1, Math.min(4, Math.round(value)));
   }
 
   _normalizeMetric(metric) {
@@ -1396,7 +1516,7 @@ class EnergyOriginTable extends HTMLElement {
       .donuts {
         display: grid;
         gap: 14px;
-        grid-template-columns: 1fr;
+        grid-template-columns: repeat(var(--donuts-per-row, 1), minmax(180px, 1fr));
       }
 
       .donut-card {
@@ -1426,6 +1546,18 @@ class EnergyOriginTable extends HTMLElement {
       .donut-empty {
         fill: none;
         stroke: var(--divider-color, rgba(0, 0, 0, 0.12));
+      }
+
+      .donut-segment {
+        cursor: help;
+        outline: none;
+        transition: opacity 120ms ease, filter 120ms ease;
+      }
+
+      .donut-segment:hover,
+      .donut-segment:focus {
+        filter: brightness(1.08);
+        opacity: 0.9;
       }
 
       .donut-center-title,
@@ -1616,6 +1748,10 @@ class EnergyOriginTable extends HTMLElement {
 
       @media (max-width: 680px) {
         .donut-layout {
+          grid-template-columns: 1fr;
+        }
+
+        .donuts {
           grid-template-columns: 1fr;
         }
 
