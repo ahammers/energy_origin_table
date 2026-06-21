@@ -115,7 +115,7 @@ class EnergyOriginTable extends HTMLElement {
 
       const metadata = await this._loadStatisticMetadata(statsIds);
       const raw = await this._loadStatistics(statsIds, start, end);
-      const series = this._buildDeltaSeries(raw, metadata);
+      const series = this._buildDeltaSeries(raw.data, metadata, raw.normalizedToKwh ? "kWh" : null);
       const result = this._calculateRows(resolved, series, start, end);
 
       this._state = {
@@ -293,7 +293,7 @@ class EnergyOriginTable extends HTMLElement {
   async _loadStatisticMetadata(statisticIds) {
     try {
       const result = await this._hass.callWS({
-        type: "recorder/list_statistic_ids",
+        type: "recorder/get_statistics_metadata",
         statistic_ids: statisticIds,
       });
 
@@ -312,25 +312,42 @@ class EnergyOriginTable extends HTMLElement {
 
   async _loadStatistics(statisticIds, start, end) {
     const requestStart = new Date(start.getTime() - 2 * 60 * 60 * 1000);
-    const result = await this._hass.callWS({
+    const request = {
       type: "recorder/statistics_during_period",
       start_time: requestStart.toISOString(),
       end_time: end.toISOString(),
       statistic_ids: statisticIds,
       period: "hour",
       types: ["sum"],
-    });
+    };
 
-    return result || {};
+    try {
+      const result = await this._hass.callWS({
+        ...request,
+        units: {
+          energy: "kWh",
+        },
+      });
+      return {
+        data: result || {},
+        normalizedToKwh: true,
+      };
+    } catch (error) {
+      const result = await this._hass.callWS(request);
+      return {
+        data: result || {},
+        normalizedToKwh: false,
+      };
+    }
   }
 
-  _buildDeltaSeries(raw, metadata) {
+  _buildDeltaSeries(raw, metadata, unitOverride) {
     const series = {};
     for (const [statisticId, points] of Object.entries(raw || {})) {
       const sorted = Array.isArray(points)
         ? [...points].filter((point) => Number.isFinite(Number(point.sum))).sort((a, b) => this._pointTime(a) - this._pointTime(b))
         : [];
-      const unit = this._unitFor(statisticId, sorted, metadata);
+      const unit = unitOverride || this._unitFor(statisticId, sorted, metadata);
       const values = new Map();
 
       for (let index = 1; index < sorted.length; index += 1) {
@@ -356,7 +373,10 @@ class EnergyOriginTable extends HTMLElement {
 
   _unitFor(statisticId, points, metadata) {
     const meta = metadata && metadata[statisticId] ? metadata[statisticId] : {};
-    const fromMeta = meta.unit_of_measurement || meta.unit || meta.statistic_unit_of_measurement;
+    const fromMeta = meta.statistics_unit_of_measurement
+      || meta.statistic_unit_of_measurement
+      || meta.unit_of_measurement
+      || meta.unit;
     const fromPoint = points.find((point) => point.unit_of_measurement || point.unit);
     return fromMeta || (fromPoint && (fromPoint.unit_of_measurement || fromPoint.unit)) || "kWh";
   }

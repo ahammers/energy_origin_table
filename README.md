@@ -67,7 +67,7 @@ devices:
 
 - Die Karte nutzt Home-Assistant-Langzeitstatistiken und wertet standardmaessig die letzten 30 Tage aus.
 - Energiezaehler muessen eine auswertbare `sum`-Statistik besitzen.
-- `Wh` und `kWh` werden unterstuetzt.
+- Die Recorder-Abfrage normalisiert Energie-Statistiken nach `kWh`, damit `Wh` und `kWh` nicht gemischt ausgewertet werden.
 - Batterie ist optional. Wenn keine Batteriequelle gefunden wird, wird der Batterieanteil als `0` behandelt.
 - Es wird bewusst keine Gesamtsumme ueber alle Tabellenzeilen gebildet, da Bereichs- und Einzelgeraete parallel enthalten sein koennen.
 
