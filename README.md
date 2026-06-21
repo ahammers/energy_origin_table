@@ -56,7 +56,7 @@ Die Farben innerhalb des Balkens zeigen weiterhin die Herkunftsanteile der jewei
 
 ## Donut-Diagramme
 
-Die Tabelle kann um Donut-Diagramme oberhalb der Tabelle erweitert werden. Jeder Donut zeigt eine Messgroesse. Der innere Ring zeigt Ebene 1, der aeussere Ring Ebene 2.
+Die Tabelle kann um Donut-Diagramme oberhalb der Tabelle erweitert werden. Jeder Donut zeigt eine Messgroesse. Der innere Ring zeigt Ebene 1, der aeussere Ring Ebene 2. Die Legende wird einmal gemeinsam rechts neben den Donuts angezeigt.
 
 ```yaml
 type: custom:energy-origin-table
@@ -88,6 +88,8 @@ days: 30
 show_table: false
 donuts: all
 ```
+
+Falls nach einem HACS-Update weiterhin die alte Tabelle angezeigt wird, Browser-Cache hart neu laden oder die Resource-Version in Home Assistant aktualisieren.
 
 ## Ebenen-Sortierung
 

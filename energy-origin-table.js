@@ -81,6 +81,8 @@ class EnergyOriginTable extends HTMLElement {
         debug: Boolean(this._config.debug),
         debugSeries: this._config.debug_series || this._config.debugSeries || [],
         relativeBarWidths: this._useRelativeBarWidths(),
+        donuts: this._enabledDonutMetrics(),
+        showTable: this._showTable(),
       },
     });
 
@@ -935,6 +937,7 @@ class EnergyOriginTable extends HTMLElement {
     return `
       ${this._renderDonuts()}
       ${this._showTable() ? this._renderTable() : ""}
+      ${!this._showTable() ? this._renderDebug() : ""}
     `;
   }
 
@@ -975,14 +978,18 @@ class EnergyOriginTable extends HTMLElement {
     }
 
     const rows = this._sortedRows(this._state.rows);
+    const colorMap = this._rowColorMap(rows);
     return `
-      <div class="donuts">
-        ${metrics.map((metric) => this._renderDonut(metric, rows)).join("")}
+      <div class="donut-layout">
+        <div class="donuts">
+          ${metrics.map((metric) => this._renderDonut(metric, rows, colorMap)).join("")}
+        </div>
+        ${this._renderDonutLegend(rows, colorMap)}
       </div>
     `;
   }
 
-  _renderDonut(metric, rows) {
+  _renderDonut(metric, rows, colorMap) {
     const label = this._metricLabel(metric);
     const level1 = rows.filter((row) => (row.level || 1) === 1);
     const level2 = rows.filter((row) => (row.level || 1) > 1);
@@ -993,8 +1000,8 @@ class EnergyOriginTable extends HTMLElement {
       <section class="donut-card">
         <div class="donut-title">${this._escape(label)}</div>
         <svg class="donut-svg" viewBox="0 0 240 240" role="img" aria-label="${this._escape(label)}">
-          ${this._renderDonutRing(level2, metric, 82, 110, "Ebene 2")}
-          ${this._renderDonutRing(level1, metric, 45, 75, "Ebene 1")}
+          ${this._renderDonutRing(level2, metric, 82, 110, "Ebene 2", colorMap)}
+          ${this._renderDonutRing(level1, metric, 45, 75, "Ebene 1", colorMap)}
           <circle cx="120" cy="120" r="38" class="donut-hole"></circle>
           <text x="120" y="116" class="donut-center-title">${this._escape(this._metricShortLabel(metric))}</text>
           <text x="120" y="136" class="donut-center-value">${this._escape(this._format(level1Total))} kWh</text>
@@ -1007,7 +1014,7 @@ class EnergyOriginTable extends HTMLElement {
     `;
   }
 
-  _renderDonutRing(rows, metric, innerRadius, outerRadius, levelLabel) {
+  _renderDonutRing(rows, metric, innerRadius, outerRadius, levelLabel, colorMap) {
     const values = rows
       .map((row, index) => ({
         row,
@@ -1027,11 +1034,40 @@ class EnergyOriginTable extends HTMLElement {
       const endAngle = startAngle + sweep;
       const path = this._annularSectorPath(120, 120, innerRadius, outerRadius, startAngle, endAngle);
       const percent = this._percent(item.value, total);
-      const color = this._rowColor(item.row, item.index);
+      const color = this._rowColor(item.row, item.index, colorMap);
       const title = `${levelLabel}: ${item.row.name} - ${this._format(item.value)} kWh (${this._format(percent)} %)`;
       startAngle = endAngle;
       return `<path d="${path}" fill="${color}"><title>${this._escape(title)}</title></path>`;
     }).join("");
+  }
+
+  _renderDonutLegend(rows, colorMap) {
+    const levels = [
+      { level: 1, label: "Ebene 1" },
+      { level: 2, label: "Ebene 2" },
+    ];
+
+    return `
+      <aside class="donut-legend" aria-label="Donut-Legende">
+        ${levels.map((group) => {
+          const groupRows = rows.filter((row) => (row.level || 1) === group.level);
+          if (!groupRows.length) {
+            return "";
+          }
+          return `
+            <div class="legend-group">
+              <div class="legend-title">${group.label}</div>
+              ${groupRows.map((row, index) => `
+                <div class="legend-item">
+                  <span class="legend-swatch" style="background:${this._rowColor(row, index, colorMap)}"></span>
+                  <span class="legend-name">${this._escape(row.name)}</span>
+                </div>
+              `).join("")}
+            </div>
+          `;
+        }).join("")}
+      </aside>
+    `;
   }
 
   _annularSectorPath(cx, cy, innerRadius, outerRadius, startAngle, endAngle) {
@@ -1170,14 +1206,14 @@ class EnergyOriginTable extends HTMLElement {
     const configured = this._config.donuts || this._config.show_donuts || this._config.donut_metrics || [];
     const all = ["total", "pv", "battery", "grid"];
 
-    if (configured === true || configured === "all") {
+    if (configured === true || String(configured).toLowerCase() === "all") {
       return all;
     }
     if (Array.isArray(configured)) {
       return configured.map((metric) => this._normalizeMetric(metric)).filter((metric) => all.includes(metric));
     }
     if (configured && typeof configured === "object") {
-      return all.filter((metric) => configured[metric] === true);
+      return all.filter((metric) => this._isEnabled(configured[metric]));
     }
     return [];
   }
@@ -1200,14 +1236,22 @@ class EnergyOriginTable extends HTMLElement {
   }
 
   _showTable() {
-    return this._config.show_table !== false && this._config.table !== false;
+    return !this._isDisabled(this._config.show_table) && !this._isDisabled(this._config.table);
   }
 
   _useRelativeBarWidths() {
-    return this._config.relative_bar_widths === true
-      || this._config.relativeBarWidths === true
+    return this._isEnabled(this._config.relative_bar_widths)
+      || this._isEnabled(this._config.relativeBarWidths)
       || this._config.bar_width_mode === "relative"
       || this._config.barWidthMode === "relative";
+  }
+
+  _isEnabled(value) {
+    return value === true || String(value).toLowerCase() === "true" || String(value).toLowerCase() === "yes";
+  }
+
+  _isDisabled(value) {
+    return value === false || String(value).toLowerCase() === "false" || String(value).toLowerCase() === "no";
   }
 
   _metricLabel(metric) {
@@ -1232,8 +1276,8 @@ class EnergyOriginTable extends HTMLElement {
     return rows.reduce((sum, row) => sum + Math.max(0, Number(row[metric]) || 0), 0);
   }
 
-  _rowColor(row, index) {
-    const palette = [
+  _rowColorMap(rows) {
+    const level1Palette = [
       "#2563eb",
       "#16a34a",
       "#dc2626",
@@ -1242,6 +1286,8 @@ class EnergyOriginTable extends HTMLElement {
       "#0891b2",
       "#db2777",
       "#65a30d",
+    ];
+    const level2Palette = [
       "#ea580c",
       "#4f46e5",
       "#0d9488",
@@ -1251,17 +1297,28 @@ class EnergyOriginTable extends HTMLElement {
       "#a16207",
       "#15803d",
     ];
-    const seed = this._hashString(row.statisticId || row.name || String(index));
-    return palette[Math.abs(seed) % palette.length];
+
+    const map = new Map();
+    const byLevel = [
+      { rows: rows.filter((row) => (row.level || 1) === 1), palette: level1Palette },
+      { rows: rows.filter((row) => (row.level || 1) > 1), palette: level2Palette },
+    ];
+
+    for (const group of byLevel) {
+      group.rows.forEach((row, index) => {
+        map.set(row.statisticId || row.name, group.palette[index % group.palette.length]);
+      });
+    }
+    return map;
   }
 
-  _hashString(value) {
-    let hash = 0;
-    for (let index = 0; index < value.length; index += 1) {
-      hash = ((hash << 5) - hash) + value.charCodeAt(index);
-      hash |= 0;
+  _rowColor(row, index, colorMap) {
+    const key = row.statisticId || row.name;
+    if (colorMap && colorMap.has(key)) {
+      return colorMap.get(key);
     }
-    return hash;
+    const fallback = (row.level || 1) === 1 ? "#2563eb" : "#ea580c";
+    return fallback;
   }
 
   _formatValue(value, percent) {
@@ -1328,11 +1385,18 @@ class EnergyOriginTable extends HTMLElement {
         color: var(--error-color, #db4437);
       }
 
+      .donut-layout {
+        align-items: start;
+        display: grid;
+        gap: 18px;
+        grid-template-columns: minmax(240px, 1fr) minmax(220px, 300px);
+        margin-bottom: 16px;
+      }
+
       .donuts {
         display: grid;
-        gap: 16px;
-        grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
-        margin-bottom: 16px;
+        gap: 14px;
+        grid-template-columns: 1fr;
       }
 
       .donut-card {
@@ -1391,6 +1455,42 @@ class EnergyOriginTable extends HTMLElement {
         justify-content: center;
         line-height: 1.35;
         margin-top: 4px;
+      }
+
+      .donut-legend {
+        border-top: 1px solid var(--divider-color, rgba(0, 0, 0, 0.12));
+        padding-top: 12px;
+      }
+
+      .legend-group + .legend-group {
+        margin-top: 18px;
+      }
+
+      .legend-title {
+        color: var(--primary-text-color);
+        font-weight: 600;
+        margin-bottom: 8px;
+      }
+
+      .legend-item {
+        align-items: center;
+        display: grid;
+        gap: 8px;
+        grid-template-columns: 12px 1fr;
+        min-height: 24px;
+      }
+
+      .legend-swatch {
+        border-radius: 2px;
+        display: inline-block;
+        height: 12px;
+        width: 12px;
+      }
+
+      .legend-name {
+        color: var(--primary-text-color);
+        font-size: 0.86rem;
+        overflow-wrap: anywhere;
       }
 
       table {
@@ -1515,6 +1615,10 @@ class EnergyOriginTable extends HTMLElement {
       }
 
       @media (max-width: 680px) {
+        .donut-layout {
+          grid-template-columns: 1fr;
+        }
+
         table,
         thead,
         tbody,
