@@ -43,7 +43,7 @@ colors:
 
 ## Statistikmodus fuer berechnete Helfer
 
-Berechnete Summenwert-Helfer koennen kurzzeitig falsche Tiefpunkte liefern, wenn eine Quelle des Helfers voruebergehend `0` meldet. Die Karte entfernt solche deutlichen Ruecksprung-Ausreisser aus der kumulativen Reihe und verteilt den Verbrauch bis zum naechsten plausiblen Punkt ueber die betroffene Zeitspanne.
+Berechnete Summenwert-Helfer koennen kurzzeitig falsche Tief- oder Hochpunkte liefern, wenn eine Quelle des Helfers voruebergehend `0` meldet. Die Karte entfernt solche deutlichen Ausreisser aus der kumulativen Reihe und verteilt den Verbrauch bis zum naechsten plausiblen Punkt ueber die betroffene Zeitspanne.
 
 Normalerweise erkennt die Karte das automatisch ueber die Entity-Zustandsklasse:
 
@@ -104,7 +104,7 @@ devices:
 - Die Karte nutzt Home-Assistant-Langzeitstatistiken und wertet standardmaessig die letzten 30 Tage aus.
 - Energiezaehler muessen eine auswertbare `sum`-Statistik besitzen.
 - Die Recorder-Abfrage normalisiert Energie-Statistiken nach `kWh`, damit `Wh` und `kWh` nicht gemischt ausgewertet werden.
-- Bei berechneten Summenwert-Helfern werden deutliche Ruecksprung-Ausreisser aus der kumulativen Reihe entfernt. Der Verbrauch bis zum naechsten plausiblen Punkt wird ueber die betroffene Zeitspanne verteilt.
+- Bei berechneten Summenwert-Helfern werden deutliche Tief- und Hochpunkt-Ausreisser aus der kumulativen Reihe entfernt. Der Verbrauch bis zum naechsten plausiblen Punkt wird ueber die betroffene Zeitspanne verteilt.
 - Batterie ist optional. Wenn keine Batteriequelle gefunden wird, wird der Batterieanteil als `0` behandelt.
 - Es wird bewusst keine Gesamtsumme ueber alle Tabellenzeilen gebildet, da Bereichs- und Einzelgeraete parallel enthalten sein koennen.
 

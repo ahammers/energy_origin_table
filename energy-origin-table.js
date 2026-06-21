@@ -359,16 +359,16 @@ class EnergyOriginTable extends HTMLElement {
             .sort((a, b) => this._pointTime(a) - this._pointTime(b))
         : [];
       const unit = unitOverride || this._unitFor(statisticId, sorted, metadata);
-      const cleanCounterDrops = this._stateClassFor(statisticId) === "total";
-      const sumDelta = this._buildFieldDeltaValues(sorted, "sum", unit, cleanCounterDrops);
-      const stateDelta = this._buildFieldDeltaValues(sorted, "state", unit, cleanCounterDrops);
+      const cleanCounterOutliers = this._stateClassFor(statisticId) === "total";
+      const sumDelta = this._buildFieldDeltaValues(sorted, "sum", unit, cleanCounterOutliers);
+      const stateDelta = this._buildFieldDeltaValues(sorted, "state", unit, cleanCounterOutliers);
 
       series[statisticId] = {
         values: sumDelta.values.size ? sumDelta.values : stateDelta.values,
         sumValues: sumDelta.values,
         stateValues: stateDelta.values,
         unit,
-        cleanCounterDrops,
+        cleanCounterOutliers,
         droppedOutliers: {
           sum: sumDelta.droppedOutliers,
           state: stateDelta.droppedOutliers,
@@ -378,9 +378,9 @@ class EnergyOriginTable extends HTMLElement {
     return series;
   }
 
-  _buildFieldDeltaValues(points, field, unit, cleanCounterDrops) {
+  _buildFieldDeltaValues(points, field, unit, cleanCounterOutliers) {
     const values = new Map();
-    const cleaned = cleanCounterDrops ? this._removeCounterDropOutliers(points, field) : points;
+    const cleaned = cleanCounterOutliers ? this._removeCounterOutliers(points, field) : points;
 
     for (let index = 1; index < cleaned.length; index += 1) {
       const previous = Number(cleaned[index - 1][field]);
@@ -409,8 +409,9 @@ class EnergyOriginTable extends HTMLElement {
     };
   }
 
-  _removeCounterDropOutliers(points, field) {
-    const threshold = Number(this._config.counter_drop_threshold_kwh || 0.05);
+  _removeCounterOutliers(points, field) {
+    const backwardThreshold = Number(this._config.counter_drop_threshold_kwh || 0.05);
+    const forwardThreshold = Number(this._config.counter_spike_threshold_kwh || 25);
     const cleaned = [];
     let lastAccepted = null;
 
@@ -420,8 +421,14 @@ class EnergyOriginTable extends HTMLElement {
         continue;
       }
 
-      if (lastAccepted != null && value < lastAccepted - threshold) {
-        continue;
+      if (lastAccepted != null) {
+        const delta = value - lastAccepted;
+        const lastTime = this._pointTime(cleaned[cleaned.length - 1]);
+        const currentTime = this._pointTime(point);
+        const hours = Math.max(1, Math.round((currentTime - lastTime) / (60 * 60 * 1000)));
+        if (delta < -backwardThreshold || delta > forwardThreshold * hours) {
+          continue;
+        }
       }
 
       cleaned.push(point);
@@ -704,7 +711,7 @@ class EnergyOriginTable extends HTMLElement {
         entity: this._entityDebug(statisticId),
         metadata: metadata[statisticId] || null,
         unitUsedByCard: entry ? entry.unit : null,
-        cleanCounterDrops: entry ? entry.cleanCounterDrops : false,
+        cleanCounterOutliers: entry ? entry.cleanCounterOutliers : false,
         droppedOutliers: entry ? entry.droppedOutliers : null,
         modeAsSource: entry ? this._seriesMode(entry, "source", statisticId) : "none",
         modeAsDevice: entry ? this._seriesMode(entry, "device", statisticId) : "none",
