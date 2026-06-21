@@ -54,6 +54,41 @@ relative_bar_widths: true
 
 Die Farben innerhalb des Balkens zeigen weiterhin die Herkunftsanteile der jeweiligen Zeile.
 
+## Donut-Diagramme
+
+Die Tabelle kann um Donut-Diagramme oberhalb der Tabelle erweitert werden. Jeder Donut zeigt eine Messgroesse. Der innere Ring zeigt Ebene 1, der aeussere Ring Ebene 2.
+
+```yaml
+type: custom:energy-origin-table
+title: Energieherkunft
+days: 30
+donuts:
+  - total
+  - pv
+  - battery
+  - grid
+```
+
+Alternativ koennen einzelne Donuts als Objekt geschaltet werden:
+
+```yaml
+donuts:
+  total: true
+  pv: true
+  battery: false
+  grid: true
+```
+
+Nur Donuts ohne Tabelle:
+
+```yaml
+type: custom:energy-origin-table
+title: Energieherkunft
+days: 30
+show_table: false
+donuts: all
+```
+
 ## Ebenen-Sortierung
 
 Die Karte nutzt `included_in_stat` aus der Energy-Dashboard-Konfiguration als Ebenen-Information. Geraete ohne uebergeordnete Statistik bleiben Ebene 1, enthaltene Einzelgeraete werden Ebene 2. Es werden keine Werte abgezogen; die Ebenen dienen nur der Sortierung und Darstellung.

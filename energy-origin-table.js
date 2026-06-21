@@ -915,7 +915,7 @@ class EnergyOriginTable extends HTMLElement {
     } else if (this._state.status === "error") {
       body = `<div class="error">${this._escape(this._state.message)}</div>`;
     } else {
-      body = this._renderTable();
+      body = this._renderReady();
     }
 
     this.shadowRoot.innerHTML = `
@@ -929,6 +929,13 @@ class EnergyOriginTable extends HTMLElement {
     for (const button of this.shadowRoot.querySelectorAll("button[data-sort]")) {
       button.addEventListener("click", () => this._setSort(button.dataset.sort));
     }
+  }
+
+  _renderReady() {
+    return `
+      ${this._renderDonuts()}
+      ${this._showTable() ? this._renderTable() : ""}
+    `;
   }
 
   _renderTable() {
@@ -959,6 +966,97 @@ class EnergyOriginTable extends HTMLElement {
       </table>
       ${this._renderDebug()}
     `;
+  }
+
+  _renderDonuts() {
+    const metrics = this._enabledDonutMetrics();
+    if (!metrics.length || !this._state.rows || !this._state.rows.length) {
+      return "";
+    }
+
+    const rows = this._sortedRows(this._state.rows);
+    return `
+      <div class="donuts">
+        ${metrics.map((metric) => this._renderDonut(metric, rows)).join("")}
+      </div>
+    `;
+  }
+
+  _renderDonut(metric, rows) {
+    const label = this._metricLabel(metric);
+    const level1 = rows.filter((row) => (row.level || 1) === 1);
+    const level2 = rows.filter((row) => (row.level || 1) > 1);
+    const level1Total = this._metricTotal(level1, metric);
+    const level2Total = this._metricTotal(level2, metric);
+
+    return `
+      <section class="donut-card">
+        <div class="donut-title">${this._escape(label)}</div>
+        <svg class="donut-svg" viewBox="0 0 240 240" role="img" aria-label="${this._escape(label)}">
+          ${this._renderDonutRing(level2, metric, 82, 110, "Ebene 2")}
+          ${this._renderDonutRing(level1, metric, 45, 75, "Ebene 1")}
+          <circle cx="120" cy="120" r="38" class="donut-hole"></circle>
+          <text x="120" y="116" class="donut-center-title">${this._escape(this._metricShortLabel(metric))}</text>
+          <text x="120" y="136" class="donut-center-value">${this._escape(this._format(level1Total))} kWh</text>
+        </svg>
+        <div class="donut-stats">
+          <span>Ebene 1: ${this._format(level1Total)} kWh</span>
+          <span>Ebene 2: ${this._format(level2Total)} kWh</span>
+        </div>
+      </section>
+    `;
+  }
+
+  _renderDonutRing(rows, metric, innerRadius, outerRadius, levelLabel) {
+    const values = rows
+      .map((row, index) => ({
+        row,
+        index,
+        value: Math.max(0, Number(row[metric]) || 0),
+      }))
+      .filter((item) => item.value > 0);
+    const total = values.reduce((sum, item) => sum + item.value, 0);
+
+    if (total <= 0) {
+      return `<circle cx="120" cy="120" r="${(innerRadius + outerRadius) / 2}" class="donut-empty" stroke-width="${outerRadius - innerRadius}"></circle>`;
+    }
+
+    let startAngle = -90;
+    return values.map((item) => {
+      const sweep = (item.value / total) * 360;
+      const endAngle = startAngle + sweep;
+      const path = this._annularSectorPath(120, 120, innerRadius, outerRadius, startAngle, endAngle);
+      const percent = this._percent(item.value, total);
+      const color = this._rowColor(item.row, item.index);
+      const title = `${levelLabel}: ${item.row.name} - ${this._format(item.value)} kWh (${this._format(percent)} %)`;
+      startAngle = endAngle;
+      return `<path d="${path}" fill="${color}"><title>${this._escape(title)}</title></path>`;
+    }).join("");
+  }
+
+  _annularSectorPath(cx, cy, innerRadius, outerRadius, startAngle, endAngle) {
+    const adjustedEnd = endAngle - startAngle >= 359.99 ? startAngle + 359.99 : endAngle;
+    const largeArc = adjustedEnd - startAngle > 180 ? 1 : 0;
+    const outerStart = this._polarToCartesian(cx, cy, outerRadius, startAngle);
+    const outerEnd = this._polarToCartesian(cx, cy, outerRadius, adjustedEnd);
+    const innerEnd = this._polarToCartesian(cx, cy, innerRadius, adjustedEnd);
+    const innerStart = this._polarToCartesian(cx, cy, innerRadius, startAngle);
+
+    return [
+      `M ${outerStart.x} ${outerStart.y}`,
+      `A ${outerRadius} ${outerRadius} 0 ${largeArc} 1 ${outerEnd.x} ${outerEnd.y}`,
+      `L ${innerEnd.x} ${innerEnd.y}`,
+      `A ${innerRadius} ${innerRadius} 0 ${largeArc} 0 ${innerStart.x} ${innerStart.y}`,
+      "Z",
+    ].join(" ");
+  }
+
+  _polarToCartesian(cx, cy, radius, angleDegrees) {
+    const angleRadians = (angleDegrees * Math.PI) / 180;
+    return {
+      x: this._debugNumber(cx + radius * Math.cos(angleRadians)),
+      y: this._debugNumber(cy + radius * Math.sin(angleRadians)),
+    };
   }
 
   _renderDebug() {
@@ -1068,11 +1166,102 @@ class EnergyOriginTable extends HTMLElement {
     return value > 0 ? Math.max(2, Math.min(100, width)) : 0;
   }
 
+  _enabledDonutMetrics() {
+    const configured = this._config.donuts || this._config.show_donuts || this._config.donut_metrics || [];
+    const all = ["total", "pv", "battery", "grid"];
+
+    if (configured === true || configured === "all") {
+      return all;
+    }
+    if (Array.isArray(configured)) {
+      return configured.map((metric) => this._normalizeMetric(metric)).filter((metric) => all.includes(metric));
+    }
+    if (configured && typeof configured === "object") {
+      return all.filter((metric) => configured[metric] === true);
+    }
+    return [];
+  }
+
+  _normalizeMetric(metric) {
+    const normalized = String(metric || "").toLowerCase();
+    if (["pv", "solar"].includes(normalized)) {
+      return "pv";
+    }
+    if (["battery", "batterie", "akku"].includes(normalized)) {
+      return "battery";
+    }
+    if (["grid", "netz"].includes(normalized)) {
+      return "grid";
+    }
+    if (["total", "gesamt"].includes(normalized)) {
+      return "total";
+    }
+    return normalized;
+  }
+
+  _showTable() {
+    return this._config.show_table !== false && this._config.table !== false;
+  }
+
   _useRelativeBarWidths() {
     return this._config.relative_bar_widths === true
       || this._config.relativeBarWidths === true
       || this._config.bar_width_mode === "relative"
       || this._config.barWidthMode === "relative";
+  }
+
+  _metricLabel(metric) {
+    return {
+      total: "Gesamtverbrauch",
+      pv: "PV-Verbrauch",
+      battery: "Batterie-Verbrauch",
+      grid: "Netz-Verbrauch",
+    }[metric] || metric;
+  }
+
+  _metricShortLabel(metric) {
+    return {
+      total: "Gesamt",
+      pv: "PV",
+      battery: "Batterie",
+      grid: "Netz",
+    }[metric] || metric;
+  }
+
+  _metricTotal(rows, metric) {
+    return rows.reduce((sum, row) => sum + Math.max(0, Number(row[metric]) || 0), 0);
+  }
+
+  _rowColor(row, index) {
+    const palette = [
+      "#2563eb",
+      "#16a34a",
+      "#dc2626",
+      "#ca8a04",
+      "#7c3aed",
+      "#0891b2",
+      "#db2777",
+      "#65a30d",
+      "#ea580c",
+      "#4f46e5",
+      "#0d9488",
+      "#9333ea",
+      "#be123c",
+      "#0284c7",
+      "#a16207",
+      "#15803d",
+    ];
+    const seed = this._hashString(row.statisticId || row.name || String(index));
+    return palette[Math.abs(seed) % palette.length];
+  }
+
+  _hashString(value) {
+    let hash = 0;
+    for (let index = 0; index < value.length; index += 1) {
+      hash = ((hash << 5) - hash) + value.charCodeAt(index);
+      hash |= 0;
+    }
+    return hash;
   }
 
   _formatValue(value, percent) {
@@ -1137,6 +1326,71 @@ class EnergyOriginTable extends HTMLElement {
 
       .error {
         color: var(--error-color, #db4437);
+      }
+
+      .donuts {
+        display: grid;
+        gap: 16px;
+        grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+        margin-bottom: 16px;
+      }
+
+      .donut-card {
+        border-top: 1px solid var(--divider-color, rgba(0, 0, 0, 0.12));
+        padding-top: 12px;
+        text-align: center;
+      }
+
+      .donut-title {
+        color: var(--primary-text-color);
+        font-weight: 600;
+        margin-bottom: 6px;
+      }
+
+      .donut-svg {
+        display: block;
+        height: auto;
+        margin: 0 auto;
+        max-width: 240px;
+        width: 100%;
+      }
+
+      .donut-hole {
+        fill: var(--card-background-color, #fff);
+      }
+
+      .donut-empty {
+        fill: none;
+        stroke: var(--divider-color, rgba(0, 0, 0, 0.12));
+      }
+
+      .donut-center-title,
+      .donut-center-value {
+        dominant-baseline: middle;
+        fill: var(--primary-text-color);
+        font-family: inherit;
+        text-anchor: middle;
+      }
+
+      .donut-center-title {
+        font-size: 14px;
+        font-weight: 700;
+      }
+
+      .donut-center-value {
+        fill: var(--secondary-text-color);
+        font-size: 11px;
+      }
+
+      .donut-stats {
+        color: var(--secondary-text-color);
+        display: flex;
+        flex-wrap: wrap;
+        font-size: 0.82rem;
+        gap: 8px 12px;
+        justify-content: center;
+        line-height: 1.35;
+        margin-top: 4px;
       }
 
       table {
