@@ -1,0 +1,94 @@
+# Energy Origin Table
+
+Eine Home-Assistant-Lovelace-Custom-Card, die vorhandene Energie-Langzeitstatistiken im Browser auswertet und fuer konfigurierte Einzelgeraete zeigt, aus welchen rechnerischen Quellen der Verbrauch stammt:
+
+- PV direkt
+- Batterieentladung
+- Netzbezug
+
+Die Karte erzeugt keine Sensoren, schreibt keine Daten und veraendert weder bestehende Entities noch das Energy Dashboard.
+
+## Installation ueber HACS
+
+1. Dieses Verzeichnis als eigenes GitHub-Repository veroeffentlichen.
+2. In HACS ein benutzerdefiniertes Repository hinzufuegen.
+3. Kategorie `Dashboard` auswaehlen.
+4. Repository installieren.
+5. Browser neu laden.
+
+> Empfehlung: Das GitHub-Repository sollte `energy-origin-table` heissen, damit Dateiname und Repository-Name zu den HACS-Dashboard-Regeln passen.
+
+## Minimal-Konfiguration
+
+```yaml
+type: custom:energy-origin-table
+title: Energieherkunft
+days: 30
+```
+
+Die Karte versucht dann, PV, Netz, Batterie und Geraete aus der Energy-Dashboard-Konfiguration zu lesen.
+
+## Farben anpassen
+
+```yaml
+type: custom:energy-origin-table
+title: Energieherkunft
+days: 30
+
+colors:
+  pv: "#43a047"
+  battery: "#fbc02d"
+  grid: "#e53935"
+```
+
+## Manueller Fallback
+
+```yaml
+type: custom:energy-origin-table
+title: Energieherkunft
+days: 30
+use_energy_dashboard: false
+
+pv_energy: sensor.deine_pv_energie
+grid_import_energy: sensor.dein_netzbezug
+grid_export_energy: sensor.deine_einspeisung
+battery_discharge_energy: sensor.deine_batterieentladung
+battery_charge_energy: sensor.deine_batterieladung
+
+devices:
+  - entity: sensor.waermepumpe_energie
+    name: Waermepumpe (K)
+
+  - entity: sensor.wallbox_energie
+    name: Wallbox
+```
+
+## Hinweise
+
+- Die Karte nutzt Home-Assistant-Langzeitstatistiken und wertet standardmaessig die letzten 30 Tage aus.
+- Energiezaehler muessen eine auswertbare `sum`-Statistik besitzen.
+- `Wh` und `kWh` werden unterstuetzt.
+- Batterie ist optional. Wenn keine Batteriequelle gefunden wird, wird der Batterieanteil als `0` behandelt.
+- Es wird bewusst keine Gesamtsumme ueber alle Tabellenzeilen gebildet, da Bereichs- und Einzelgeraete parallel enthalten sein koennen.
+
+## Entwicklung ohne HACS
+
+Datei nach Home Assistant kopieren:
+
+```text
+/config/www/energy-origin-table.js
+```
+
+Resource in Lovelace:
+
+```text
+/local/energy-origin-table.js?v=1
+```
+
+Karte:
+
+```yaml
+type: custom:energy-origin-table
+title: Energieherkunft
+days: 30
+```
