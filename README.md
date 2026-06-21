@@ -64,6 +64,19 @@ device_statistic_modes:
 
 Echte Shelly-Energiezaehler wie `sensor.obergeschoss_total_active_energy` oder `sensor.wallbox_total_active_energy` koennen auf `auto` bleiben.
 
+## Debug-Ausgabe
+
+Zur Analyse von Statistikproblemen kann unterhalb der Tabelle ein kopierbarer JSON-Block angezeigt werden.
+
+```yaml
+type: custom:energy-origin-table
+title: Energieherkunft
+days: 30
+debug: true
+```
+
+Die Ausgabe enthaelt erkannte Quellen und Geraete, Entity-Attribute, Statistik-Metadaten, erste und letzte Recorder-Punkte sowie die aus `sum` und `state` berechneten Gesamtwerte.
+
 ## Manueller Fallback
 
 ```yaml

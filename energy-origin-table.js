@@ -78,6 +78,7 @@ class EnergyOriginTable extends HTMLElement {
         batteryCharge: this._config.battery_charge_energy,
         devices: this._config.devices || [],
         deviceStatisticModes: this._config.device_statistic_modes || this._config.statistic_modes || {},
+        debug: Boolean(this._config.debug),
       },
     });
 
@@ -118,11 +119,15 @@ class EnergyOriginTable extends HTMLElement {
       const raw = await this._loadStatistics(statsIds, start, end);
       const series = this._buildDeltaSeries(raw.data, metadata, raw.normalizedToKwh ? "kWh" : null);
       const result = this._calculateRows(resolved, series, start, end);
+      const debugInfo = this._config.debug
+        ? this._buildDebugInfo(resolved, statsIds, metadata, raw, series, result, start, end)
+        : null;
 
       this._state = {
         status: "ready",
         ...result,
         resolved,
+        debugInfo,
       };
       this._render();
     } catch (error) {
@@ -160,6 +165,9 @@ class EnergyOriginTable extends HTMLElement {
         batteryCharge: manual.sources.batteryCharge || automatic.sources.batteryCharge,
       },
       devices: manual.devices.length ? manual.devices : automatic.devices,
+      debugEnergyPreferences: dashboard,
+      debugAutomaticConfig: automatic,
+      debugManualConfig: manual,
     };
 
     return merged;
@@ -482,7 +490,70 @@ class EnergyOriginTable extends HTMLElement {
       evaluableHours,
       missingSourceHours,
       stateFallbackRows: rows.filter((row) => row.statisticMode === "state").length,
+      sourceDebug: this._sourceDebug(sourceValues, sharesByHour, hourKeys),
     };
+  }
+
+  _sourceDebug(sourceValues, sharesByHour, hourKeys) {
+    const totals = {
+      pvProduced: this._sumMatchingHours(sourceValues.pv, hourKeys),
+      gridImport: this._sumMatchingHours(sourceValues.gridImport, hourKeys),
+      gridExport: this._sumMatchingHours(sourceValues.gridExport, hourKeys),
+      batteryDischarge: this._sumMatchingHours(sourceValues.batteryDischarge, hourKeys),
+      batteryCharge: this._sumMatchingHours(sourceValues.batteryCharge, hourKeys),
+      pvDirect: 0,
+      sourceTotal: 0,
+    };
+
+    const shares = {
+      pvMin: null,
+      pvMax: null,
+      batteryMin: null,
+      batteryMax: null,
+      gridMin: null,
+      gridMax: null,
+    };
+
+    for (const [key, share] of sharesByHour.entries()) {
+      const pvProduced = sourceValues.pv.get(key) || 0;
+      const gridImport = sourceValues.gridImport.get(key) || 0;
+      const gridExport = sourceValues.gridExport.get(key) || 0;
+      const batteryDischarge = sourceValues.batteryDischarge.get(key) || 0;
+      const batteryCharge = sourceValues.batteryCharge.get(key) || 0;
+      const pvDirect = Math.max(pvProduced - gridExport - batteryCharge, 0);
+
+      totals.pvDirect += pvDirect;
+      totals.sourceTotal += pvDirect + batteryDischarge + gridImport;
+      this._minMax(shares, "pv", share.pv);
+      this._minMax(shares, "battery", share.battery);
+      this._minMax(shares, "grid", share.grid);
+    }
+
+    return {
+      totals: this._roundObject(totals),
+      shares: this._roundObject(shares),
+    };
+  }
+
+  _sumMatchingHours(values, hourKeys) {
+    let total = 0;
+    for (const key of hourKeys) {
+      const value = values && values.get ? values.get(key) : null;
+      if (Number.isFinite(value)) {
+        total += value;
+      }
+    }
+    return total;
+  }
+
+  _minMax(target, prefix, value) {
+    if (!Number.isFinite(value)) {
+      return;
+    }
+    const minKey = `${prefix}Min`;
+    const maxKey = `${prefix}Max`;
+    target[minKey] = target[minKey] == null ? value : Math.min(target[minKey], value);
+    target[maxKey] = target[maxKey] == null ? value : Math.max(target[maxKey], value);
   }
 
   _seriesEntry(series, statisticId) {
@@ -556,6 +627,128 @@ class EnergyOriginTable extends HTMLElement {
       }
     }
     return total;
+  }
+
+  _buildDebugInfo(resolved, statsIds, metadata, raw, series, result, start, end) {
+    const idsByRole = {
+      sources: resolved.sources,
+      devices: resolved.devices.map((device) => ({
+        name: device.name,
+        statisticId: device.statisticId,
+      })),
+    };
+
+    const seriesInfo = {};
+    for (const statisticId of statsIds) {
+      const entry = this._seriesEntry(series, statisticId);
+      seriesInfo[statisticId] = {
+        entity: this._entityDebug(statisticId),
+        metadata: metadata[statisticId] || null,
+        unitUsedByCard: entry ? entry.unit : null,
+        modeAsSource: entry ? this._seriesMode(entry, "source", statisticId) : "none",
+        modeAsDevice: entry ? this._seriesMode(entry, "device", statisticId) : "none",
+        totalsFromDeltas: entry
+          ? this._roundObject({
+              sum: this._mapTotal(entry.sumValues),
+              state: this._mapTotal(entry.stateValues),
+              selectedAsDevice: this._mapTotal(this._seriesValues(series, statisticId, "device")),
+              selectedAsSource: this._mapTotal(this._seriesValues(series, statisticId, "source")),
+            })
+          : null,
+        rawPoints: this._rawPointDebug(raw.data[statisticId]),
+      };
+    }
+
+    return {
+      generatedAt: new Date().toISOString(),
+      cardConfig: {
+        days: Number(this._config.days),
+        use_energy_dashboard: this._config.use_energy_dashboard !== false,
+        device_statistic_modes: this._config.device_statistic_modes || this._config.statistic_modes || {},
+      },
+      period: {
+        start: start.toISOString(),
+        end: end.toISOString(),
+      },
+      recorderRequest: {
+        normalizedToKwh: raw.normalizedToKwh,
+        requestedTypes: ["sum", "state"],
+      },
+      resolved: idsByRole,
+      energyPreferences: resolved.debugEnergyPreferences || null,
+      automaticConfig: resolved.debugAutomaticConfig || null,
+      manualConfig: resolved.debugManualConfig || null,
+      sourceDebug: result.sourceDebug,
+      rows: result.rows.map((row) => this._roundObject({
+        name: row.name,
+        statisticId: row.statisticId,
+        statisticMode: row.statisticMode,
+        total: row.total,
+        pv: row.pv,
+        battery: row.battery,
+        grid: row.grid,
+        hours: row.hours,
+      })),
+      series: seriesInfo,
+    };
+  }
+
+  _entityDebug(entityId) {
+    const state = entityId && this._hass && this._hass.states ? this._hass.states[entityId] : null;
+    if (!state) {
+      return null;
+    }
+
+    return {
+      entityId,
+      state: state.state,
+      attributes: {
+        friendly_name: state.attributes.friendly_name,
+        device_class: state.attributes.device_class,
+        state_class: state.attributes.state_class,
+        unit_of_measurement: state.attributes.unit_of_measurement,
+      },
+    };
+  }
+
+  _rawPointDebug(points) {
+    const cleaned = Array.isArray(points)
+      ? points.map((point) => ({
+          start: point.start || point.start_time || null,
+          end: point.end || point.end_time || null,
+          sum: this._debugNumber(point.sum),
+          state: this._debugNumber(point.state),
+          unit: point.unit || point.unit_of_measurement || null,
+        }))
+      : [];
+
+    return {
+      count: cleaned.length,
+      first: cleaned.slice(0, 3),
+      last: cleaned.slice(Math.max(0, cleaned.length - 3)),
+    };
+  }
+
+  _roundObject(value) {
+    if (Array.isArray(value)) {
+      return value.map((item) => this._roundObject(item));
+    }
+    if (value && typeof value === "object") {
+      const rounded = {};
+      for (const [key, nested] of Object.entries(value)) {
+        rounded[key] = this._roundObject(nested);
+      }
+      return rounded;
+    }
+    return this._debugNumber(value);
+  }
+
+  _debugNumber(value) {
+    const number = Number(value);
+    if (!Number.isFinite(number)) {
+      return value == null ? null : value;
+    }
+    return Math.round(number * 1000000) / 1000000;
   }
 
   _hourKeys(start, end) {
@@ -636,6 +829,22 @@ class EnergyOriginTable extends HTMLElement {
           ${rows.map((row) => this._renderRow(row)).join("")}
         </tbody>
       </table>
+      ${this._renderDebug()}
+    `;
+  }
+
+  _renderDebug() {
+    if (!this._config.debug || !this._state.debugInfo) {
+      return "";
+    }
+
+    const json = JSON.stringify(this._state.debugInfo, null, 2);
+    return `
+      <details class="debug" open>
+        <summary>Debug-Rohdaten fuer Codex</summary>
+        <div class="debug-note">Bitte den folgenden JSON-Block kopieren und hier einfuegen.</div>
+        <textarea readonly>${this._escape(json)}</textarea>
+      </details>
     `;
   }
 
@@ -843,6 +1052,38 @@ class EnergyOriginTable extends HTMLElement {
 
       .bar .grid {
         background: var(--energy-origin-grid);
+      }
+
+      .debug {
+        border-top: 1px solid var(--divider-color, rgba(0, 0, 0, 0.12));
+        margin-top: 16px;
+        padding-top: 12px;
+      }
+
+      .debug summary {
+        color: var(--primary-text-color);
+        cursor: pointer;
+        font-weight: 500;
+      }
+
+      .debug-note {
+        color: var(--secondary-text-color);
+        font-size: 0.86rem;
+        margin: 8px 0;
+      }
+
+      .debug textarea {
+        background: var(--code-editor-background-color, var(--card-background-color, #fff));
+        border: 1px solid var(--divider-color, rgba(0, 0, 0, 0.12));
+        border-radius: 6px;
+        box-sizing: border-box;
+        color: var(--primary-text-color);
+        font-family: var(--code-font-family, monospace);
+        font-size: 0.78rem;
+        min-height: 360px;
+        padding: 8px;
+        resize: vertical;
+        width: 100%;
       }
 
       @media (max-width: 680px) {
