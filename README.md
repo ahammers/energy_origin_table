@@ -41,6 +41,29 @@ colors:
   grid: "#e53935"
 ```
 
+## Statistikmodus fuer berechnete Helfer
+
+Berechnete Summenwert-Helfer koennen in Home Assistant eine `sum`-Statistik liefern, die fuer den Verbrauch im Zeitraum zu hoch ist. Fuer solche Geraete kann die Karte explizit die Differenz der gespeicherten Zustandswerte verwenden.
+
+Normalerweise erkennt die Karte das automatisch ueber die Entity-Zustandsklasse:
+
+- `total` / Summenwert: Zustandsdifferenz
+- `total_increasing`: Recorder-`sum`
+
+Die folgende Konfiguration ist nur als Override fuer Sonderfaelle gedacht.
+
+```yaml
+type: custom:energy-origin-table
+title: Energieherkunft
+days: 30
+
+device_statistic_modes:
+  sensor.keller_total_energy_without_wallbox: state
+  sensor.erdgeschoss_total_active_energy: state
+```
+
+Echte Shelly-Energiezaehler wie `sensor.obergeschoss_total_active_energy` oder `sensor.wallbox_total_active_energy` koennen auf `auto` bleiben.
+
 ## Manueller Fallback
 
 ```yaml
@@ -68,6 +91,7 @@ devices:
 - Die Karte nutzt Home-Assistant-Langzeitstatistiken und wertet standardmaessig die letzten 30 Tage aus.
 - Energiezaehler muessen eine auswertbare `sum`-Statistik besitzen.
 - Die Recorder-Abfrage normalisiert Energie-Statistiken nach `kWh`, damit `Wh` und `kWh` nicht gemischt ausgewertet werden.
+- Bei berechneten Helfern kann Home Assistant andere Statistikreihen liefern als bei echten Energiezaehlern. Die Karte fragt deshalb `sum` und `state` ab und verwendet fuer Geraete bei offensichtlich ueberhoehten `sum`-Werten automatisch die Zustandsdifferenz.
 - Batterie ist optional. Wenn keine Batteriequelle gefunden wird, wird der Batterieanteil als `0` behandelt.
 - Es wird bewusst keine Gesamtsumme ueber alle Tabellenzeilen gebildet, da Bereichs- und Einzelgeraete parallel enthalten sein koennen.
 

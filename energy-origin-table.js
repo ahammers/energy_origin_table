@@ -77,6 +77,7 @@ class EnergyOriginTable extends HTMLElement {
         batteryDischarge: this._config.battery_discharge_energy,
         batteryCharge: this._config.battery_charge_energy,
         devices: this._config.devices || [],
+        deviceStatisticModes: this._config.device_statistic_modes || this._config.statistic_modes || {},
       },
     });
 
@@ -318,7 +319,7 @@ class EnergyOriginTable extends HTMLElement {
       end_time: end.toISOString(),
       statistic_ids: statisticIds,
       period: "hour",
-      types: ["sum"],
+      types: ["sum", "state"],
     };
 
     try {
@@ -345,30 +346,44 @@ class EnergyOriginTable extends HTMLElement {
     const series = {};
     for (const [statisticId, points] of Object.entries(raw || {})) {
       const sorted = Array.isArray(points)
-        ? [...points].filter((point) => Number.isFinite(Number(point.sum))).sort((a, b) => this._pointTime(a) - this._pointTime(b))
+        ? [...points]
+            .filter((point) => Number.isFinite(Number(point.sum)) || Number.isFinite(Number(point.state)))
+            .sort((a, b) => this._pointTime(a) - this._pointTime(b))
         : [];
       const unit = unitOverride || this._unitFor(statisticId, sorted, metadata);
-      const values = new Map();
+      const sumValues = this._buildFieldDeltaValues(sorted, "sum", unit);
+      const stateValues = this._buildFieldDeltaValues(sorted, "state", unit);
 
-      for (let index = 1; index < sorted.length; index += 1) {
-        const previous = Number(sorted[index - 1].sum);
-        const current = Number(sorted[index].sum);
-        let delta = current - previous;
-        if (!Number.isFinite(delta)) {
-          continue;
-        }
-        if (delta < -0.0001) {
-          continue;
-        }
-        if (delta < 0) {
-          delta = 0;
-        }
-        values.set(this._hourKey(this._pointTime(sorted[index])), this._convertToKwh(delta, unit));
-      }
-
-      series[statisticId] = { values, unit };
+      series[statisticId] = {
+        values: sumValues.size ? sumValues : stateValues,
+        sumValues,
+        stateValues,
+        unit,
+      };
     }
     return series;
+  }
+
+  _buildFieldDeltaValues(points, field, unit) {
+    const values = new Map();
+
+    for (let index = 1; index < points.length; index += 1) {
+      const previous = Number(points[index - 1][field]);
+      const current = Number(points[index][field]);
+      let delta = current - previous;
+      if (!Number.isFinite(delta)) {
+        continue;
+      }
+      if (delta < -0.0001) {
+        continue;
+      }
+      if (delta < 0) {
+        delta = 0;
+      }
+      values.set(this._hourKey(this._pointTime(points[index])), this._convertToKwh(delta, unit));
+    }
+
+    return values;
   }
 
   _unitFor(statisticId, points, metadata) {
@@ -394,11 +409,11 @@ class EnergyOriginTable extends HTMLElement {
 
   _calculateRows(resolved, series, start, end) {
     const sourceValues = {
-      pv: this._seriesValues(series, resolved.sources.pv),
-      gridImport: this._seriesValues(series, resolved.sources.gridImport),
-      gridExport: this._seriesValues(series, resolved.sources.gridExport),
-      batteryDischarge: this._seriesValues(series, resolved.sources.batteryDischarge),
-      batteryCharge: this._seriesValues(series, resolved.sources.batteryCharge),
+      pv: this._seriesValues(series, resolved.sources.pv, "source"),
+      gridImport: this._seriesValues(series, resolved.sources.gridImport, "source"),
+      gridExport: this._seriesValues(series, resolved.sources.gridExport, "source"),
+      batteryDischarge: this._seriesValues(series, resolved.sources.batteryDischarge, "source"),
+      batteryCharge: this._seriesValues(series, resolved.sources.batteryCharge, "source"),
     };
     const hourKeys = this._hourKeys(start, end);
     let evaluableHours = 0;
@@ -432,7 +447,9 @@ class EnergyOriginTable extends HTMLElement {
     }
 
     const rows = resolved.devices.map((device) => {
-      const deviceValues = this._seriesValues(series, device.statisticId);
+      const deviceEntry = this._seriesEntry(series, device.statisticId);
+      const statisticMode = this._seriesMode(deviceEntry, "device", device.statisticId);
+      const deviceValues = this._seriesValues(series, device.statisticId, "device");
       const totals = { pv: 0, battery: 0, grid: 0, total: 0, hours: 0 };
 
       for (const [key, shares] of sharesByHour.entries()) {
@@ -450,6 +467,7 @@ class EnergyOriginTable extends HTMLElement {
       return {
         name: device.name,
         statisticId: device.statisticId,
+        statisticMode,
         ...totals,
       };
     }).filter((row) => row.total > 0);
@@ -463,11 +481,81 @@ class EnergyOriginTable extends HTMLElement {
       hourCount: hourKeys.length,
       evaluableHours,
       missingSourceHours,
+      stateFallbackRows: rows.filter((row) => row.statisticMode === "state").length,
     };
   }
 
-  _seriesValues(series, statisticId) {
-    return statisticId && series[statisticId] ? series[statisticId].values : new Map();
+  _seriesEntry(series, statisticId) {
+    return statisticId && series[statisticId] ? series[statisticId] : null;
+  }
+
+  _seriesValues(series, statisticId, role) {
+    const entry = this._seriesEntry(series, statisticId);
+    if (!entry) {
+      return new Map();
+    }
+    return this._seriesMode(entry, role, statisticId) === "state" ? entry.stateValues : entry.values;
+  }
+
+  _seriesMode(entry, role, statisticId) {
+    if (!entry) {
+      return "none";
+    }
+
+    if (role === "source") {
+      return entry.sumValues && entry.sumValues.size ? "sum" : "state";
+    }
+
+    const configuredMode = this._configuredStatisticMode(statisticId);
+    if (configuredMode === "sum" || configuredMode === "state") {
+      return configuredMode;
+    }
+
+    const stateClass = this._stateClassFor(statisticId);
+    if (stateClass === "total") {
+      return "state";
+    }
+    if (stateClass === "total_increasing") {
+      return "sum";
+    }
+
+    if (!entry.stateValues || !entry.stateValues.size) {
+      return "sum";
+    }
+    if (!entry.sumValues || !entry.sumValues.size) {
+      return "state";
+    }
+
+    const sumTotal = this._mapTotal(entry.sumValues);
+    const stateTotal = this._mapTotal(entry.stateValues);
+    const threshold = Number(this._config.sum_state_ratio_threshold || 3);
+    if (stateTotal > 0 && sumTotal > stateTotal * threshold) {
+      return "state";
+    }
+    return "sum";
+  }
+
+  _configuredStatisticMode(statisticId) {
+    const modes = this._config.device_statistic_modes || this._config.statistic_modes || {};
+    const mode = modes && statisticId ? String(modes[statisticId] || "").toLowerCase() : "";
+    return ["sum", "state", "auto"].includes(mode) ? mode : "auto";
+  }
+
+  _stateClassFor(statisticId) {
+    if (!statisticId || !this._hass || !this._hass.states || !this._hass.states[statisticId]) {
+      return "";
+    }
+    return String(this._hass.states[statisticId].attributes.state_class || "").toLowerCase();
+  }
+
+  _mapTotal(values) {
+    let total = 0;
+    for (const value of values.values()) {
+      if (Number.isFinite(value) && value > 0) {
+        total += value;
+      }
+    }
+    return total;
   }
 
   _hourKeys(start, end) {
@@ -527,9 +615,12 @@ class EnergyOriginTable extends HTMLElement {
     const rows = this._sortedRows(this._state.rows);
     const summary = `Auswertbar: ${this._state.evaluableHours} von ${this._state.hourCount} Stunden`;
     const missing = this._state.missingSourceHours ? `; nicht auswertbar: ${this._state.missingSourceHours}` : "";
+    const fallback = this._state.stateFallbackRows
+      ? `; ${this._state.stateFallbackRows} Ger\u00e4te \u00fcber Zustandsdifferenz`
+      : "";
 
     return `
-      <div class="summary">${summary}${missing}</div>
+      <div class="summary">${summary}${missing}${fallback}</div>
       <table>
         <thead>
           <tr>
