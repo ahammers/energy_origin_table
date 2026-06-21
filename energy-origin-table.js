@@ -359,41 +359,98 @@ class EnergyOriginTable extends HTMLElement {
             .sort((a, b) => this._pointTime(a) - this._pointTime(b))
         : [];
       const unit = unitOverride || this._unitFor(statisticId, sorted, metadata);
-      const allowSignedDeltas = this._stateClassFor(statisticId) === "total";
-      const sumValues = this._buildFieldDeltaValues(sorted, "sum", unit, allowSignedDeltas);
-      const stateValues = this._buildFieldDeltaValues(sorted, "state", unit, allowSignedDeltas);
+      const cleanCounterDrops = this._stateClassFor(statisticId) === "total";
+      const sumDelta = this._buildFieldDeltaValues(sorted, "sum", unit, cleanCounterDrops);
+      const stateDelta = this._buildFieldDeltaValues(sorted, "state", unit, cleanCounterDrops);
 
       series[statisticId] = {
-        values: sumValues.size ? sumValues : stateValues,
-        sumValues,
-        stateValues,
+        values: sumDelta.values.size ? sumDelta.values : stateDelta.values,
+        sumValues: sumDelta.values,
+        stateValues: stateDelta.values,
         unit,
-        allowSignedDeltas,
+        cleanCounterDrops,
+        droppedOutliers: {
+          sum: sumDelta.droppedOutliers,
+          state: stateDelta.droppedOutliers,
+        },
       };
     }
     return series;
   }
 
-  _buildFieldDeltaValues(points, field, unit, allowSignedDeltas) {
+  _buildFieldDeltaValues(points, field, unit, cleanCounterDrops) {
     const values = new Map();
+    const cleaned = cleanCounterDrops ? this._removeCounterDropOutliers(points, field) : points;
 
-    for (let index = 1; index < points.length; index += 1) {
-      const previous = Number(points[index - 1][field]);
-      const current = Number(points[index][field]);
+    for (let index = 1; index < cleaned.length; index += 1) {
+      const previous = Number(cleaned[index - 1][field]);
+      const current = Number(cleaned[index][field]);
       let delta = current - previous;
       if (!Number.isFinite(delta)) {
         continue;
       }
-      if (!allowSignedDeltas && delta < -0.0001) {
+      if (delta < -0.0001) {
         continue;
       }
-      if (!allowSignedDeltas && delta < 0) {
+      if (delta < 0) {
         delta = 0;
       }
-      values.set(this._hourKey(this._pointTime(points[index])), this._convertToKwh(delta, unit));
+      const targetKeys = this._interpolatedHourKeys(cleaned[index - 1], cleaned[index]);
+      const convertedDelta = this._convertToKwh(delta, unit);
+      const valuePerHour = targetKeys.length ? convertedDelta / targetKeys.length : convertedDelta;
+      for (const key of targetKeys.length ? targetKeys : [this._hourKey(this._pointTime(cleaned[index]))]) {
+        values.set(key, (values.get(key) || 0) + valuePerHour);
+      }
     }
 
-    return values;
+    return {
+      values,
+      droppedOutliers: points.length - cleaned.length,
+    };
+  }
+
+  _removeCounterDropOutliers(points, field) {
+    const threshold = Number(this._config.counter_drop_threshold_kwh || 0.05);
+    const cleaned = [];
+    let lastAccepted = null;
+
+    for (const point of points) {
+      const value = Number(point[field]);
+      if (!Number.isFinite(value)) {
+        continue;
+      }
+
+      if (lastAccepted != null && value < lastAccepted - threshold) {
+        continue;
+      }
+
+      cleaned.push(point);
+      lastAccepted = value;
+    }
+
+    return cleaned;
+  }
+
+  _interpolatedHourKeys(previousPoint, currentPoint) {
+    const keys = [];
+    const previousTime = this._pointTime(previousPoint);
+    const currentTime = this._pointTime(currentPoint);
+    if (!Number.isFinite(previousTime) || !Number.isFinite(currentTime) || currentTime <= previousTime) {
+      return keys;
+    }
+
+    const cursor = new Date(previousTime);
+    cursor.setMinutes(0, 0, 0);
+    cursor.setHours(cursor.getHours() + 1);
+    const end = new Date(currentTime);
+    end.setMinutes(0, 0, 0);
+
+    while (cursor <= end) {
+      keys.push(cursor.toISOString());
+      cursor.setHours(cursor.getHours() + 1);
+    }
+
+    return keys;
   }
 
   _unitFor(statisticId, points, metadata) {
@@ -647,6 +704,8 @@ class EnergyOriginTable extends HTMLElement {
         entity: this._entityDebug(statisticId),
         metadata: metadata[statisticId] || null,
         unitUsedByCard: entry ? entry.unit : null,
+        cleanCounterDrops: entry ? entry.cleanCounterDrops : false,
+        droppedOutliers: entry ? entry.droppedOutliers : null,
         modeAsSource: entry ? this._seriesMode(entry, "source", statisticId) : "none",
         modeAsDevice: entry ? this._seriesMode(entry, "device", statisticId) : "none",
         totalsFromDeltas: entry

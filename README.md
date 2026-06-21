@@ -43,11 +43,11 @@ colors:
 
 ## Statistikmodus fuer berechnete Helfer
 
-Berechnete Summenwert-Helfer koennen in Home Assistant eine `sum`-Statistik liefern, die fuer den Verbrauch im Zeitraum zu hoch ist. Fuer solche Geraete kann die Karte explizit die Differenz der gespeicherten Zustandswerte verwenden.
+Berechnete Summenwert-Helfer koennen kurzzeitig falsche Tiefpunkte liefern, wenn eine Quelle des Helfers voruebergehend `0` meldet. Die Karte entfernt solche deutlichen Ruecksprung-Ausreisser aus der kumulativen Reihe und verteilt den Verbrauch bis zum naechsten plausiblen Punkt ueber die betroffene Zeitspanne.
 
 Normalerweise erkennt die Karte das automatisch ueber die Entity-Zustandsklasse:
 
-- `total` / Summenwert: signierte Zustandsdifferenzen, damit berechnete Helfer mit kurzfristigen Gegenbewegungen nicht ueberzaehlt werden
+- `total` / Summenwert: Zustandsdifferenz mit Ausreisserbereinigung
 - `total_increasing`: Recorder-`sum`
 
 Die folgende Konfiguration ist nur als Override fuer Sonderfaelle gedacht.
@@ -104,7 +104,7 @@ devices:
 - Die Karte nutzt Home-Assistant-Langzeitstatistiken und wertet standardmaessig die letzten 30 Tage aus.
 - Energiezaehler muessen eine auswertbare `sum`-Statistik besitzen.
 - Die Recorder-Abfrage normalisiert Energie-Statistiken nach `kWh`, damit `Wh` und `kWh` nicht gemischt ausgewertet werden.
-- Bei berechneten Helfern kann Home Assistant andere Statistikreihen liefern als bei echten Energiezaehlern. Die Karte fragt deshalb `sum` und `state` ab und verwendet fuer Geraete bei offensichtlich ueberhoehten `sum`-Werten automatisch die Zustandsdifferenz.
+- Bei berechneten Summenwert-Helfern werden deutliche Ruecksprung-Ausreisser aus der kumulativen Reihe entfernt. Der Verbrauch bis zum naechsten plausiblen Punkt wird ueber die betroffene Zeitspanne verteilt.
 - Batterie ist optional. Wenn keine Batteriequelle gefunden wird, wird der Batterieanteil als `0` behandelt.
 - Es wird bewusst keine Gesamtsumme ueber alle Tabellenzeilen gebildet, da Bereichs- und Einzelgeraete parallel enthalten sein koennen.
 
