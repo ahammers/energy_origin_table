@@ -47,7 +47,7 @@ Berechnete Summenwert-Helfer koennen in Home Assistant eine `sum`-Statistik lief
 
 Normalerweise erkennt die Karte das automatisch ueber die Entity-Zustandsklasse:
 
-- `total` / Summenwert: Zustandsdifferenz
+- `total` / Summenwert: signierte Zustandsdifferenzen, damit berechnete Helfer mit kurzfristigen Gegenbewegungen nicht ueberzaehlt werden
 - `total_increasing`: Recorder-`sum`
 
 Die folgende Konfiguration ist nur als Override fuer Sonderfaelle gedacht.

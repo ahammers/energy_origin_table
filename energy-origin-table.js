@@ -359,20 +359,22 @@ class EnergyOriginTable extends HTMLElement {
             .sort((a, b) => this._pointTime(a) - this._pointTime(b))
         : [];
       const unit = unitOverride || this._unitFor(statisticId, sorted, metadata);
-      const sumValues = this._buildFieldDeltaValues(sorted, "sum", unit);
-      const stateValues = this._buildFieldDeltaValues(sorted, "state", unit);
+      const allowSignedDeltas = this._stateClassFor(statisticId) === "total";
+      const sumValues = this._buildFieldDeltaValues(sorted, "sum", unit, allowSignedDeltas);
+      const stateValues = this._buildFieldDeltaValues(sorted, "state", unit, allowSignedDeltas);
 
       series[statisticId] = {
         values: sumValues.size ? sumValues : stateValues,
         sumValues,
         stateValues,
         unit,
+        allowSignedDeltas,
       };
     }
     return series;
   }
 
-  _buildFieldDeltaValues(points, field, unit) {
+  _buildFieldDeltaValues(points, field, unit, allowSignedDeltas) {
     const values = new Map();
 
     for (let index = 1; index < points.length; index += 1) {
@@ -382,10 +384,10 @@ class EnergyOriginTable extends HTMLElement {
       if (!Number.isFinite(delta)) {
         continue;
       }
-      if (delta < -0.0001) {
+      if (!allowSignedDeltas && delta < -0.0001) {
         continue;
       }
-      if (delta < 0) {
+      if (!allowSignedDeltas && delta < 0) {
         delta = 0;
       }
       values.set(this._hourKey(this._pointTime(points[index])), this._convertToKwh(delta, unit));
@@ -462,7 +464,7 @@ class EnergyOriginTable extends HTMLElement {
 
       for (const [key, shares] of sharesByHour.entries()) {
         const consumption = deviceValues.get(key);
-        if (!Number.isFinite(consumption) || consumption < 0) {
+        if (!Number.isFinite(consumption)) {
           continue;
         }
         totals.pv += consumption * shares.pv;
@@ -622,7 +624,7 @@ class EnergyOriginTable extends HTMLElement {
   _mapTotal(values) {
     let total = 0;
     for (const value of values.values()) {
-      if (Number.isFinite(value) && value > 0) {
+      if (Number.isFinite(value)) {
         total += value;
       }
     }
